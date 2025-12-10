@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NIS Interpreter Documentation</title>
+    <style>
+        body {
+            font-family: "Google Sans", Roboto, Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 850px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+        h1 {
+            color: #202124;
+            border-bottom: 2px solid #eee;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #202124;
+            margin-top: 40px;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 5px;
+        }
+        h3 {
+            color: #444;
+            margin-top: 30px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            background-color: #fff;
+        }
+        th, td {
+            border: 1px solid #dfe1e5;
+            padding: 12px 15px;
+            text-align: left;
+        }
+        th {
+            background-color: #f8f9fa;
+            font-weight: bold;
+            color: #202124;
+        }
+        tr:nth-child(even) {
+            background-color: #f8f9fa;
+        }
+        code {
+            font-family: "Roboto Mono", monospace;
+            background-color: #f1f3f4;
+            padding: 2px 5px;
+            border-radius: 4px;
+            font-size: 0.9em;
+            color: #c5221f;
+        }
+        pre {
+            background-color: #f1f3f4;
+            padding: 15px;
+            border-radius: 8px;
+            overflow-x: auto;
+            font-family: "Roboto Mono", monospace;
+            border: 1px solid #e0e0e0;
+        }
+        .note {
+            background-color: #e8f0fe;
+            border-left: 5px solid #1a73e8;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+
+<h1>NIS Interpreter Documentation</h1>
+
+<h2>Overview</h2>
+<p>NIS (Niel’s Instruction Set) is a custom assembly-like instruction set executed by a Rust interpreter. Programs are text files with labels, instructions, and optional preprocessor directives. The interpreter uses registers <code>r1</code>–<code>r8</code>, a stack pointer <code>sp</code>, and memory managed via interrupts.</p>
+
+<h2>Registers</h2>
+<table>
+    <thead>
+    <tr>
+        <th>Register</th>
+        <th>Purpose</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+        <td><code>r1</code>–<code>r7</code></td>
+        <td>General purpose</td>
+    </tr>
+    <tr>
+        <td><code>r8</code></td>
+        <td>Often used for interrupt codes</td>
+    </tr>
+    <tr>
+        <td><code>sp</code></td>
+        <td>Stack pointer</td>
+    </tr>
+    </tbody>
+</table>
+
+<h2>Special Concepts</h2>
+<div class="note">
+    <ul>
+        <li><strong>Memory allocation:</strong> You must explicitly use the <code>int</code> instruction with code <code>1</code> in <code>r8</code> to allocate memory on the stack. Value in <code>r1</code>–<code>r7</code> is the number of memory slots to allocate.</li>
+        <li><strong>Interrupts:</strong> Use <code>int</code> instruction to perform special operations (print, exit, memory).</li>
+    </ul>
+</div>
+
+<h2>Instructions</h2>
+
+<h3>Data Movement</h3>
+<table>
+    <thead>
+    <tr>
+        <th>Instruction</th>
+        <th>Usage</th>
+        <th>Description</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+        <td><code>set</code></td>
+        <td><code>set rX value</code></td>
+        <td>Sets register <code>rX</code> to <code>value</code>.</td>
+    </tr>
+    <tr>
+        <td><code>mov</code></td>
+        <td><code>mov rX rY</code></td>
+        <td>Copies value from <code>rY</code> to <code>rX</code>.</td>
+    </tr>
+    <tr>
+        <td><code>load</code></td>
+        <td><code>load rX addr</code></td>
+        <td>Loads value from memory <code>addr</code> into <code>rX</code>.</td>
+    </tr>
+    <tr>
+        <td><code>store</code></td>
+        <td><code>store addr rX</code></td>
+        <td>Stores value of <code>rX</code> into memory <code>addr</code>.</td>
+    </tr>
+    <tr>
+        <td><code>push</code></td>
+        <td><code>push rX</code></td>
+        <td>Pushes <code>rX</code> onto stack.</td>
+    </tr>
+    <tr>
+        <td><code>pop</code></td>
+        <td><code>pop rX</code></td>
+        <td>Pops from stack into <code>rX</code>.</td>
+    </tr>
+    </tbody>
+</table>
+
+<h3>Arithmetic</h3>
+<table>
+    <thead>
+    <tr>
+        <th>Instruction</th>
+        <th>Usage</th>
+        <th>Description</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+        <td><code>add</code></td>
+        <td><code>add rX rY/value</code></td>
+        <td>Adds <code>rY</code> or <code>value</code> to <code>rX</code>.</td>
+    </tr>
+    <tr>
+        <td><code>sub</code></td>
+        <td><code>sub rX rY/value</code></td>
+        <td>Subtracts <code>rY</code> or <code>value</code> from <code>rX</code>.</td>
+    </tr>
+    <tr>
+        <td><code>mul</code></td>
+        <td><code>mul rX rY/value</code></td>
+        <td>Multiplies <code>rX</code> by <code>rY</code> or <code>value</code>.</td>
+    </tr>
+    <tr>
+        <td><code>div</code></td>
+        <td><code>div rX rY/value</code></td>
+        <td>Divides <code>rX</code> by <code>rY</code> or <code>value</code>.</td>
+    </tr>
+    </tbody>
+</table>
+
+<h3>Bitwise</h3>
+<table>
+    <thead>
+    <tr>
+        <th>Instruction</th>
+        <th>Usage</th>
+        <th>Description</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+        <td><code>and</code></td>
+        <td><code>and rX rY/value</code></td>
+        <td>Bitwise AND.</td>
+    </tr>
+    <tr>
+        <td><code>or</code></td>
+        <td><code>or rX rY/value</code></td>
+        <td>Bitwise OR.</td>
+    </tr>
+    <tr>
+        <td><code>xor</code></td>
+        <td><code>xor rX rY/value</code></td>
+        <td>Bitwise XOR.</td>
+    </tr>
+    <tr>
+        <td><code>shr</code></td>
+        <td><code>shr rX rY/value</code></td>
+        <td>Shift right.</td>
+    </tr>
+    <tr>
+        <td><code>shl</code></td>
+        <td><code>shl rX rY/value</code></td>
+        <td>Shift left.</td>
+    </tr>
+    </tbody>
+</table>
+
+<h3>Control Flow</h3>
+<table>
+    <thead>
+    <tr>
+        <th>Instruction</th>
+        <th>Usage</th>
+        <th>Description</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+        <td><code>jmp</code></td>
+        <td><code>jmp label</code></td>
+        <td>Jump unconditionally.</td>
+    </tr>
+    <tr>
+        <td><code>jz</code></td>
+        <td><code>jz label</code></td>
+        <td>Jump if last comparison was zero/equal.</td>
+    </tr>
+    <tr>
+        <td><code>jnz</code></td>
+        <td><code>jnz label</code></td>
+        <td>Jump if last comparison was non-zero/unequal.</td>
+    </tr>
+    <tr>
+        <td><code>call</code></td>
+        <td><code>call label</code></td>
+        <td>Call subroutine. Pushes return address.</td>
+    </tr>
+    <tr>
+        <td><code>ret</code></td>
+        <td><code>ret</code></td>
+        <td>Return from subroutine. Pops return address.</td>
+    </tr>
+    </tbody>
+</table>
+
+<h3>Comparison</h3>
+<table>
+    <thead>
+    <tr>
+        <th>Instruction</th>
+        <th>Usage</th>
+        <th>Description</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+        <td><code>eq</code></td>
+        <td><code>eq rX rY/value</code></td>
+        <td>Sets carrierbit if equal.</td>
+    </tr>
+    <tr>
+        <td><code>neq</code></td>
+        <td><code>neq rX rY/value</code></td>
+        <td>Sets carrierbit if not equal.</td>
+    </tr>
+    <tr>
+        <td><code>big</code></td>
+        <td><code>big rX rY/value</code></td>
+        <td>Sets carrierbit if <code>rX</code> > <code>rY</code>/<code>value</code>.</td>
+    </tr>
+    <tr>
+        <td><code>sm</code></td>
+        <td><code>sm rX rY/value</code></td>
+        <td>Sets carrierbit if <code>rX</code> < <code>rY</code>/<code>value</code>.</td>
+    </tr>
+    </tbody>
+</table>
+
+<h3>System</h3>
+<table>
+    <thead>
+    <tr>
+        <th>Instruction</th>
+        <th>Usage</th>
+        <th>Description</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+        <td><code>int</code></td>
+        <td><code>int arg1</code></td>
+        <td>Executes an interrupt defined by code in <code>r8</code>. The operand provided is <code>arg1</code>.</td>
+    </tr>
+    <tr>
+        <td><code>hlt</code></td>
+        <td><code>hlt</code></td>
+        <td>Halts the interpreter. Alias for <code>int exit</code>.</td>
+    </tr>
+    </tbody>
+</table>
+
+<h2>Interrupt Codes</h2>
+<p>The <code>int</code> instruction uses the value in register <code>r8</code> to select the operation. The first operand passed to the instruction (e.g., <code>int r7</code> means <code>arg1</code> is <code>r7</code>) is used as <code>arg1</code>.</p>
+<table>
+    <thead>
+    <tr>
+        <th>Code (r8)</th>
+        <th>Operation</th>
+        <th>Description</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+        <td><code>0</code></td>
+        <td>Exit</td>
+        <td>Exits the program with the exit code specified by <code>arg1</code>.</td>
+    </tr>
+    <tr>
+        <td><code>1</code></td>
+        <td>Allocate Memory</td>
+        <td>Requests memory allocation. <code>arg1</code> specifies the number of 64-bit blocks.</td>
+    </tr>
+    <tr>
+        <td><code>2</code></td>
+        <td>Print Char</td>
+        <td>Prints the character corresponding to the ASCII code in <code>arg1</code>.</td>
+    </tr>
+    <tr>
+        <td><code>3</code></td>
+        <td>Print Number</td>
+        <td>Prints the numerical value of <code>arg1</code>.</td>
+    </tr>
+    <tr>
+        <td><code>4</code></td>
+        <td>Get Memory Total</td>
+        <td>Returns the total amount of allocated memory in register <code>r7</code>.</td>
+    </tr>
+    </tbody>
+</table>
+
+<h2>Preprocessor Directives</h2>
+<table>
+    <thead>
+    <tr>
+        <th>Directive</th>
+        <th>Usage</th>
+        <th>Description</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+        <td><code>#include</code></td>
+        <td><code>#include filename</code></td>
+        <td>Inserts contents of another file.</td>
+    </tr>
+    </tbody>
+</table>
+
+<h2>Memory and Stack</h2>
+<ul>
+    <li><strong>Allocation:</strong> You must explicitly use the <code>int</code> instruction with code <code>1</code> in <code>r8</code> to request memory allocation for the stack.</li>
+    <li><strong>Memory Info:</strong> Use <code>int</code> with code <code>4</code> in <code>r8</code> to get the total amount of allocated memory. The result is returned in register <code>r7</code>.</li>
+    <li>Stack operations use <code>sp</code> register.</li>
+    <li>Memory addresses are 0-based indices in <code>mem</code> array.</li>
+</ul>
+
+<h2>Example Program</h2>
+<p>This example demonstrates printing characters, allocating memory, and storing data.</p>
+<pre><code>main:
+    ; Print 'H' (ASCII 72) using int code 2
+    set r8 2
+    int 72
+
+    ; Print 'i' (ASCII 105)
+    int 105
+
+    ; Print newline (ASCII 10)
+    int 10
+
+    ; Allocate 5 slots of memory (int code 1)
+    set r8 1
+    int 5
+
+    ; Store value 123 at memory address 0
+    set r1 123
+    store 0 r1
+
+    ; Load value from address 0 back into r2
+    load r2 0
+
+    ; Print the number in r2 (int code 3)
+    set r8 3
+    int r2
+
+    ; Exit program (int code 0)
+    set r8 0
+    int 0</code></pre>
+
+</body>
+</html>
