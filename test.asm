@@ -1,3 +1,4 @@
+#include test2file.asm
 main:
     ; Print 'H' (ASCII 72) using int code 2
     set r8 2
@@ -21,8 +22,8 @@ main:
     load r2 0
 
     ; Print the number in r2 (int code 3)
-    set r8 3
-    int r2
+    mov r7 r2
+    call printnum
 
     ; Exit program (int code 0)
     set r8 0

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
-use std::process;
+use std::{env, process};
 
 static stringInstructionsToU8: [&str; 27] = ["", "mov", "add", "sub", "div", "mul", "and", "or", "xor", "shr", "shl", "store", "load", "push", "pop", "jmp", "jz", "jnz", "eq", "neq", "big", "sm", "hlt", "int", "set","call","ret"];
 static stringToReg: [&str; 10] = ["r0","r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8","sp"];
@@ -57,6 +57,9 @@ fn main() {
     let mut ip = 0;
     let mut registers: [u64; 10] = [0, 0, 0, 0, 0, 0, 0, 0,0,0];
     let mut labels:HashMap<&str,u64> = HashMap::new();
+    //let args: Vec<String> = env::args().collect();
+    //let pathStr:String = args[1].clone();
+    //let path = Path::new(pathStr.as_str());
     let path = Path::new("/home/niel/RustroverProjects/NISinturpriter/test.asm");
     let mut data_file = File::open(path).unwrap();
     let mut file_content = String::new();
@@ -101,6 +104,9 @@ fn main() {
     //println!("{:?}", filtered);
     for line in filtered.iter() {
         let trimmed = line.trim();
+        if trimmed.starts_with(";"){
+            continue;
+        }
         if trimmed.starts_with("#"){
             continue;
         }
@@ -379,7 +385,9 @@ fn main() {
                 }else {
                     ip = line.arg1 as usize;
                 }
-                //println!("call going to {}",ip);
+                if cfg!(debug_assertions) {
+                    println!("call going to {}", ip);
+                }
                 continue;
             }
             26 => {
