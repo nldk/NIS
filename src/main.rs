@@ -57,10 +57,10 @@ fn main() {
     let mut ip = 0;
     let mut registers: [u64; 10] = [0, 0, 0, 0, 0, 0, 0, 0,0,0];
     let mut labels:HashMap<&str,u64> = HashMap::new();
-    //let args: Vec<String> = env::args().collect();
-    //let pathStr:String = args[1].clone();
-    //let path = Path::new(pathStr.as_str());
-    let path = Path::new("/home/niel/RustroverProjects/NISinturpriter/test.asm");
+    let args: Vec<String> = env::args().collect();
+    let pathStr:String = args[1].clone();
+    let path = Path::new(pathStr.as_str());
+
     let mut data_file = File::open(path).unwrap();
     let mut file_content = String::new();
     data_file.read_to_string(&mut file_content).unwrap();
