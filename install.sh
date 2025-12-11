@@ -1,0 +1,1 @@
+sudo mv nis /usr/local/bin
