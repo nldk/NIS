@@ -1,9 +1,12 @@
+mod backends;
+
 use clap::{Arg, ArgAction, Command};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, Lines, Read, Write};
 use std::path::Path;
 use std::{env, io, process};
+use crate::backends::Interpreter;
 
 static stringInstructionsToU8: [&str; 27] = [
     "", "mov", "add", "sub", "div", "mul", "and", "or", "xor", "shr", "shl", "store", "load",
@@ -11,6 +14,44 @@ static stringInstructionsToU8: [&str; 27] = [
     "ret",
 ];
 static stringToReg: [&str; 10] = ["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "sp"];
+#[derive(Debug)]
+struct IntermediateLanguageInstruction{
+    instruction: String,
+    arg1: String,
+    arg2: String,
+}
+#[derive(Debug)]
+struct IntermediateLanguageLabel{
+    label: String,
+}
+enum IntermediateLanguageLine{
+    Instruction(IntermediateLanguageInstruction),
+    Label(IntermediateLanguageLabel),
+}
+impl IntermediateLanguageLine{
+    fn parchLine(&mut self, line: &str) -> IntermediateLanguageLine {
+        if line.ends_with(":") {
+            let label = IntermediateLanguageLabel{label: line.to_string()};
+            IntermediateLanguageLine::Label(label)
+        }else {
+            let splitLine = line.trim().split(" ").collect::<Vec<&str>>();
+            let instruction = if (stringInstructionsToU8.contains(&splitLine[0])){
+                splitLine[0].to_string()
+            }else {
+                panic!("invalid instruction");
+            };
+            let arg1 = splitLine.get(1).unwrap_or(&"").to_string();
+            let arg2 = splitLine.get(2).unwrap_or(&"").to_string();
+
+            let line = IntermediateLanguageInstruction{instruction: instruction.to_string(), arg1, arg2};
+            IntermediateLanguageLine::Instruction(line)
+        }
+
+    }
+}
+struct IntermediateLanguage{
+    lines: Vec<IntermediateLanguageLine>,
+}
 #[derive(Debug)]
 struct Line {
     instruction: u8,
@@ -29,11 +70,11 @@ fn getLineArgCode(arg: &str) -> (u64, bool) {
         } else {
             if arg.trim().len() > 1 {
                 //println!("{}", arg);
-                if arg.chars().nth(0).unwrap() == '0' || arg.chars().nth(1).unwrap() == 'x' {
+                if arg.starts_with("0x") {
                     return match u64::from_str_radix(arg.trim_start_matches("0x"), 16) {
                         Ok(v) => (v, false),
                         Err(_) => {
-                            (0, false) // or return an error, or use default
+                            (0, false)
                         }
                     };
                 }
@@ -62,272 +103,7 @@ fn parse_include_file(path: &str) -> String {
     include_content
 }
 
-struct Interpreter {
-    lines: Vec<Line>,
-}
 
-impl Interpreter {
-    fn run(&mut self) {
-        let mut registers = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-        let mut mem: Vec<u64> = vec![];
-        let mut carrierbit = false;
-        let mut callStack: Vec<usize> = Vec::new();
-        let mut ip = 0;
-        while ip < self.lines.len() {
-            let line = &self.lines[ip];
-            match line.instruction {
-                1 => registers[line.arg1 as usize] = registers[line.arg2 as usize],
-                2 => {
-                    if line.arg2IsReg {
-                        registers[line.arg1 as usize] += registers[line.arg2 as usize]
-                    } else {
-                        registers[line.arg1 as usize] += line.arg2
-                    }
-                }
-                3 => {
-                    if line.arg2IsReg {
-                        registers[line.arg1 as usize] -= registers[line.arg2 as usize]
-                    } else {
-                        registers[line.arg1 as usize] -= line.arg2
-                    }
-                }
-                4 => {
-                    if line.arg2IsReg {
-                        registers[line.arg1 as usize] /= registers[line.arg2 as usize]
-                    } else {
-                        registers[line.arg1 as usize] /= line.arg2
-                    }
-                }
-                5 => {
-                    if line.arg2IsReg {
-                        registers[line.arg1 as usize] *= registers[line.arg2 as usize]
-                    } else {
-                        registers[line.arg1 as usize] *= line.arg2
-                    }
-                }
-                6 => {
-                    let dest = line.arg1;
-                    let rhs = if line.arg2IsReg {
-                        registers[line.arg2 as usize]
-                    } else {
-                        line.arg2
-                    };
-                    registers[dest as usize] &= rhs;
-                }
-                7 => {
-                    let dest = line.arg1;
-                    let rhs = if line.arg2IsReg {
-                        registers[line.arg2 as usize]
-                    } else {
-                        line.arg2
-                    };
-                    registers[dest as usize] |= rhs;
-                }
-                8 => {
-                    let dest = line.arg1;
-                    let rhs = if line.arg2IsReg {
-                        registers[line.arg2 as usize]
-                    } else {
-                        line.arg2
-                    };
-                    registers[dest as usize] ^= rhs;
-                }
-                9 => {
-                    if line.arg2IsReg {
-                        registers[line.arg1 as usize] >>= registers[line.arg2 as usize];
-                    } else {
-                        registers[line.arg1 as usize] >>= line.arg2;
-                    }
-                }
-                10 => {
-                    if line.arg2IsReg {
-                        registers[line.arg1 as usize] <<= registers[line.arg2 as usize];
-                    } else {
-                        registers[line.arg1 as usize] <<= line.arg2;
-                    }
-                }
-                11 => {
-                    let address = if line.arg1IsReg {
-                        registers[line.arg1 as usize]
-                    } else {
-                        line.arg1
-                    };
-                    let value = if line.arg2IsReg {
-                        registers[line.arg2 as usize]
-                    } else {
-                        line.arg2
-                    };
-                    mem[address as usize] = value;
-                }
-                12 => {
-                    let address = if line.arg2IsReg {
-                        registers[line.arg2 as usize]
-                    } else {
-                        line.arg2
-                    };
-                    registers[line.arg1 as usize] = mem[address as usize];
-                }
-                13 => {
-                    //println!("rv{}", registers[9]);
-                    let value = if line.arg1IsReg {
-                        registers[line.arg1 as usize]
-                    } else {
-                        line.arg1
-                    };
-                    registers[9] += 1;
-                    mem[registers[9] as usize] = value;
-                }
-                14 => {
-                    registers[line.arg1 as usize] = mem[registers[9] as usize];
-                    registers[9] -= 1;
-                }
-                15 => {
-                    if cfg!(debug_assertions) {
-                        println!("jmping to {}", line.arg1);
-                    }
-                    if line.arg1IsReg {
-                        ip = registers[line.arg1 as usize] as usize;
-                    } else {
-                        ip = line.arg1 as usize;
-                    }
-                    continue;
-                }
-                16 => {
-                    if cfg!(debug_assertions) {
-                        println!("jz:{}", carrierbit);
-                    }
-                    if carrierbit {
-                        if line.arg1IsReg {
-                            ip = registers[line.arg1 as usize] as usize;
-                        } else {
-                            ip = line.arg1 as usize;
-                        }
-                        continue;
-                    }
-                }
-                17 => {
-                    if cfg!(debug_assertions) {
-                        println!("jnz:{}", carrierbit);
-                    }
-                    if !carrierbit {
-                        if line.arg1IsReg {
-                            ip = registers[line.arg1 as usize] as usize;
-                        } else {
-                            ip = line.arg1 as usize;
-                        }
-                        continue;
-                    }
-                }
-                18 => {
-                    let val1 = if line.arg1IsReg {
-                        registers[line.arg1 as usize]
-                    } else {
-                        line.arg1
-                    };
-                    let val2 = if line.arg2IsReg {
-                        registers[line.arg2 as usize]
-                    } else {
-                        line.arg2
-                    };
-                    carrierbit = val1 == val2
-                }
-                19 => {
-                    let val1 = if line.arg1IsReg {
-                        registers[line.arg1 as usize]
-                    } else {
-                        line.arg1
-                    };
-                    let val2 = if line.arg2IsReg {
-                        registers[line.arg2 as usize]
-                    } else {
-                        line.arg2
-                    };
-                    carrierbit = val1 != val2
-                }
-                20 => {
-                    let val1 = if line.arg1IsReg {
-                        registers[line.arg1 as usize]
-                    } else {
-                        line.arg1
-                    };
-                    let val2 = if line.arg2IsReg {
-                        registers[line.arg2 as usize]
-                    } else {
-                        line.arg2
-                    };
-                    carrierbit = val1 > val2
-                }
-                21 => {
-                    let val1 = if line.arg1IsReg {
-                        registers[line.arg1 as usize]
-                    } else {
-                        line.arg1
-                    };
-                    let val2 = if line.arg2IsReg {
-                        registers[line.arg2 as usize]
-                    } else {
-                        line.arg2
-                    };
-                    carrierbit = val1 < val2
-                }
-                22 => {
-                    let mut p: u64 = 0;
-                    let mut useP: bool = false;
-                    interrupt(0, 0, &mut mem, &mut p, &mut useP);
-                }
-                23 => {
-                    let mut p: u64 = 0;
-                    let mut useP: bool = false;
-                    if line.arg1IsReg {
-                        //println!("{}",regristers[7]);
-                        interrupt(
-                            registers[8] as u8,
-                            registers[line.arg1 as usize],
-                            &mut mem,
-                            &mut p,
-                            &mut useP,
-                        )
-                    } else {
-                        interrupt(registers[8] as u8, line.arg1, &mut mem, &mut p, &mut useP)
-                    }
-                    if useP {
-                        registers[7] = p
-                    }
-                }
-                24 => registers[line.arg1 as usize] = line.arg2,
-                25 => {
-                    //println!("call called",);
-                    callStack.push(ip + 1);
-                    if line.arg1IsReg {
-                        ip = registers[line.arg1 as usize] as usize;
-                    } else {
-                        ip = line.arg1 as usize;
-                    }
-                    if cfg!(debug_assertions) {
-                        println!("call going to {}", ip);
-                    }
-                    continue;
-                }
-                26 => {
-                    //println!("{:?}", callStack);
-                    if let Some(return_address) = callStack.pop() {
-                        ip = return_address;
-                        continue;
-                    } else {
-                        panic!("RET with empty call stack. ip: {}", ip);
-                    }
-                    //println!("returning to {}",ip);
-                    continue;
-                }
-                _ => panic!(
-                    "invalid instruction {}",
-                    stringInstructionsToU8[line.instruction as usize]
-                ),
-            }
-            ip += 1;
-        }
-    }
-}
 
 struct Parcher {
     lines: Vec<Line>,
