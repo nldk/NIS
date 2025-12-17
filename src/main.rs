@@ -6,7 +6,7 @@ use std::fs::File;
 use std::io::{BufReader, Lines, Read, Write};
 use std::path::Path;
 use std::{env, io, process};
-use crate::backends::Interpreter;
+use crate::backends::ByteCodeCompiler;
 
 static stringInstructionsToU8: [&str; 27] = [
     "", "mov", "add", "sub", "div", "mul", "and", "or", "xor", "shr", "shl", "store", "load",
@@ -24,12 +24,13 @@ struct IntermediateLanguageInstruction{
 struct IntermediateLanguageLabel{
     label: String,
 }
+#[derive(Debug)]
 enum IntermediateLanguageLine{
     Instruction(IntermediateLanguageInstruction),
     Label(IntermediateLanguageLabel),
 }
 impl IntermediateLanguageLine{
-    fn parchLine(&mut self, line: &str) -> IntermediateLanguageLine {
+    fn parchLine(line: &str) -> IntermediateLanguageLine {
         if line.ends_with(":") {
             let label = IntermediateLanguageLabel{label: line.to_string()};
             IntermediateLanguageLine::Label(label)
@@ -49,6 +50,7 @@ impl IntermediateLanguageLine{
 
     }
 }
+#[derive(Debug)]
 struct IntermediateLanguage{
     lines: Vec<IntermediateLanguageLine>,
 }
@@ -60,41 +62,7 @@ struct Line {
     arg2: u64,
     arg2IsReg: bool,
 }
-fn getLineArgCode(arg: &str) -> (u64, bool) {
-    if arg.len() > 0 {
-        if arg.chars().next().unwrap() == 'r' || arg.chars().next().unwrap() == 's' {
-            return (
-                stringToReg.iter().position(|&s| s == arg).unwrap() as u64,
-                true,
-            );
-        } else {
-            if arg.trim().len() > 1 {
-                //println!("{}", arg);
-                if arg.starts_with("0x") {
-                    return match u64::from_str_radix(arg.trim_start_matches("0x"), 16) {
-                        Ok(v) => (v, false),
-                        Err(_) => {
-                            (0, false)
-                        }
-                    };
-                }
-            }
-            if arg.trim().len() > 2 {
-                if arg.starts_with("\"") && arg.ends_with("\"") {
-                    let value = arg.trim_start_matches("\"").trim_end_matches("\"");
-                    return (value.chars().next().unwrap() as u64, false);
-                }
-            }
-            return match arg.parse::<u64>() {
-                Ok(v) => (v, false),
-                Err(_) => {
-                    (0, false) // or return an error, or use default
-                }
-            };
-        }
-    }
-    return (0, false);
-}
+
 fn parse_include_file(path: &str) -> String {
     let include_path = Path::new(path);
     let mut include_file = File::open(include_path).unwrap();
@@ -122,7 +90,9 @@ impl Parcher {
             labels: HashMap::new(),
         }
     }
-    fn parchFile(&mut self, path: &str) {
+
+
+    fn parchFileToIntermediate(&mut self, path: &str)->IntermediateLanguage {
         let mut data_file = File::open(path).unwrap();
         let mut file_content = String::new();
         data_file.read_to_string(&mut file_content).unwrap();
@@ -136,7 +106,7 @@ impl Parcher {
             .iter()
             .map(|s| s.to_string())
             .collect::<Vec<String>>();
-        self.instructionIndex = 0;
+
         for line in self.filtered.clone().iter() {
             let trimmed = line.trim();
             if trimmed.starts_with("#") {
@@ -168,156 +138,25 @@ impl Parcher {
                 }
             }
         }
-        //println!("{:?}", filtered);
-        for line in self.filtered.iter() {
-            let trimmed = line.trim();
-            if trimmed.starts_with(";") {
+        let mut intermediatelanguage: IntermediateLanguage = IntermediateLanguage{lines:vec![]};
+        for line in self.filtered.clone().iter() {
+            if line.trim().is_empty() || line.trim().starts_with(";") || line.starts_with("#"){
                 continue;
             }
-            if trimmed.starts_with("#") {
-                continue;
-            }
-            if trimmed.ends_with(":") {
-                let name = trimmed.trim_end_matches(":");
-                self.labels
-                    .insert(name.to_string(), self.instructionIndex + 1);
-                continue;
-            }
-
-            self.instructionIndex += 1;
+            intermediatelanguage.lines.push(IntermediateLanguageLine::parchLine(line))
         }
-        for (e, i) in self.filtered.iter().enumerate() {
-            if i.trim().starts_with(";") {
-                continue;
-            }
-            if i.trim().ends_with(":") {
-                continue;
-            }
-            if i.trim().starts_with("#") {
-                continue;
-            }
-            let splitLine = i.trim().split(" ").collect::<Vec<&str>>();
-            if splitLine[0] == "call"
-                || splitLine[0] == "jmp"
-                || splitLine[0] == "jz"
-                || splitLine[0] == "jnz"
-            {
-                if cfg!(debug_assertions) {
-                    println!(
-                        "{}:{}",
-                        splitLine[1],
-                        self.labels[&splitLine[1].to_string()]
-                    );
-                }
-
-                let (arg1, reg1) = (self.labels[&splitLine[1].to_string()], false);
-                let (arg2, reg2) = splitLine.get(2).map_or((0, false), |x| getLineArgCode(x));
-                self.lines.push(Line {
-                    instruction: stringInstructionsToU8
-                        .iter()
-                        .position(|&s| s == splitLine[0])
-                        .unwrap() as u8,
-                    arg1: arg1,
-                    arg2: arg2,
-                    arg1IsReg: reg1,
-                    arg2IsReg: reg2,
-                });
-                continue;
-            }
-            if cfg!(debug_assertions) {
-                println!("{:?}", splitLine);
-            }
-            let (arg1, reg1) = splitLine.get(1).map_or((0, false), |x| getLineArgCode(x));
-            let (arg2, reg2) = splitLine.get(2).map_or((0, false), |x| getLineArgCode(x));
-            self.lines.push(Line {
-                instruction: stringInstructionsToU8
-                    .iter()
-                    .position(|&s| s == splitLine[0])
-                    .expect(&("invalid instruction: ".to_string() + splitLine[0]))
-                    as u8,
-                arg1: arg1,
-                arg2: arg2,
-                arg1IsReg: reg1,
-                arg2IsReg: reg2,
-            });
-        }
-        let main_index = self.labels["main"];
-
-        let jmp_main = Line {
-            instruction: stringInstructionsToU8
-                .iter()
-                .position(|&s| s == "jmp")
-                .unwrap() as u8,
-            arg1: main_index,
-            arg1IsReg: false,
-            arg2: 0,
-            arg2IsReg: false,
-        };
-
-        self.lines.insert(0, jmp_main);
-        if cfg!(debug_assertions) {
-            println!("{:?}", self.lines);
-        }
-    }
-
-    fn write_instructions(filename: &str, lines: &[Line]) -> io::Result<()> {
-        let mut file = File::create(filename)?;
-
-        for line in lines {
-            // Write opcode
-            file.write_all(&[line.instruction])?;
-
-            // Write arg1 and arg2 as little-endian u64
-            file.write_all(&line.arg1.to_le_bytes())?;
-            file.write_all(&line.arg2.to_le_bytes())?;
-
-            // Pack booleans into a single byte
-            let mut flags: u8 = 0;
-            if line.arg1IsReg {
-                flags |= 1 << 0;
-            }
-            if line.arg2IsReg {
-                flags |= 1 << 1;
-            }
-            file.write_all(&[flags])?;
-        }
-
-        Ok(())
-    }
-
-    fn read_instructions(filename: &str) -> io::Result<Vec<Line>> {
-        let mut file = BufReader::new(File::open(filename)?);
-        let mut instructions = Vec::new();
-        let mut buf = [0u8; 18];
-
-        while file.read_exact(&mut buf).is_ok() {
-            let instruction = buf[0];
-            let arg1 = u64::from_le_bytes(buf[1..9].try_into().unwrap());
-            let arg2 = u64::from_le_bytes(buf[9..17].try_into().unwrap());
-            let flags = buf[17];
-            let arg1_is_reg = flags & 1 != 0;
-            let arg2_is_reg = flags & 2 != 0;
-
-            instructions.push(Line {
-                instruction: instruction,
-                arg1: arg1,
-                arg1IsReg: arg1_is_reg,
-                arg2: arg2,
-                arg2IsReg: arg2_is_reg,
-            });
-        }
-
-        Ok(instructions)
-    }
-    fn readFromFile(&mut self, path: &str) {
-        self.lines = Parcher::read_instructions(path).unwrap()
-    }
-    fn writeToFile(&mut self, path: &str) {
-        Parcher::write_instructions(path, &self.lines).unwrap()
+        intermediatelanguage
     }
 }
 
 fn main() {
+    let mut parcher = Parcher::new();
+    let intermetiate = parcher.parchFileToIntermediate("/home/niel/NIS/test.asm");
+    println!("{:?}", intermetiate);
+    let mut byteCodeCompiler = ByteCodeCompiler{lines:vec![],labels:HashMap::new(),instructionIndex:0};
+    byteCodeCompiler.compileByteCodeFromIntermediate(intermetiate);
+    byteCodeCompiler.run();
+    /*
     let matches = Command::new("NIS")
         .version("1.0")
         .author("You")
@@ -392,23 +231,6 @@ fn main() {
     } else {
         println!("No valid option provided. Use -h for help.");
     }
+    */
 }
 
-fn interrupt(intCode: u8, value: u64, mem: &mut Vec<u64>, p: &mut u64, useP: &mut bool) {
-    match intCode {
-        0 => process::exit(value as i32),
-        1 => {
-            let start = mem.len();
-            mem.resize(start + value as usize, 0);
-            *useP = true;
-            *p = start as u64;
-        }
-        2 => print!("{}", std::char::from_u32(value as u32).unwrap()),
-        3 => print!("{}", value),
-        4 => {
-            *p = mem.len() as u64;
-            *useP = true;
-        }
-        _ => panic!("invalid interrupt code {}", intCode),
-    }
-}

@@ -1,10 +1,136 @@
-use crate::{interrupt, stringInstructionsToU8, Line};
+use std::collections::HashMap;
+use std::{io, process};
+use std::fs::File;
+use std::io::{BufReader, Read, Write};
+use std::path::Path;
+use crate::{parse_include_file, stringInstructionsToU8, stringToReg, IntermediateLanguage, IntermediateLanguageLine, Line, Parcher};
 
-pub struct Interpreter {
+pub struct ByteCodeCompiler {
     pub lines: Vec<Line>,
+    pub labels: HashMap<String, usize>,
+    pub instructionIndex: usize,
 }
 
-impl Interpreter {
+impl ByteCodeCompiler {
+    pub fn getLineArgCode(arg: &str) -> (u64, bool) {
+        if arg.len() > 0 {
+            if arg.chars().next().unwrap() == 'r' || arg.chars().next().unwrap() == 's' {
+                return (
+                    stringToReg.iter().position(|&s| s == arg).unwrap() as u64,
+                    true,
+                );
+            } else {
+                if arg.trim().len() > 1 {
+                    //println!("{}", arg);
+                    if arg.starts_with("0x") {
+                        return match u64::from_str_radix(arg.trim_start_matches("0x"), 16) {
+                            Ok(v) => (v, false),
+                            Err(_) => {
+                                (0, false)
+                            }
+                        };
+                    }
+                }
+                if arg.trim().len() > 2 {
+                    if arg.starts_with("\"") && arg.ends_with("\"") {
+                        let value = arg.trim_start_matches("\"").trim_end_matches("\"");
+                        return (value.chars().next().unwrap() as u64, false);
+                    }
+                }
+                return match arg.parse::<u64>() {
+                    Ok(v) => (v, false),
+                    Err(_) => {
+                        (0, false) // or return an error, or use default
+                    }
+                };
+            }
+        }
+        return (0, false);
+    }
+
+    pub fn compileByteCodeFromIntermediate(&mut self, intermediateCode:IntermediateLanguage) {
+        for i in intermediateCode.lines.iter(){
+            match i {
+                IntermediateLanguageLine::Instruction(line) => {
+                    self.instructionIndex += 1
+                },
+                IntermediateLanguageLine::Label(label) => {
+                    let name = label.label.trim_end_matches(":");
+                    self.labels
+                        .insert(name.to_string(), self.instructionIndex +1);
+                }
+            }
+        }
+        for i in intermediateCode.lines{
+            match i {
+                IntermediateLanguageLine::Instruction(line) => {
+                    if line.instruction == "call"
+                        || line.instruction == "jmp"
+                        || line.instruction == "jz"
+                        || line.instruction == "jnz"
+                    {
+                        if cfg!(debug_assertions) {
+                            println!(
+                                "{}:{}",
+                                line.arg1,
+                                self.labels[&line.arg1.to_string()]
+                            );
+                        }
+
+                        let (arg1, reg1) = (self.labels[&line.arg1.to_string()], false);
+                        let (arg2, reg2) = ByteCodeCompiler::getLineArgCode(line.arg2.as_str());
+                        self.lines.push(Line {
+                            instruction: stringInstructionsToU8
+                                .iter()
+                                .position(|&s| s == line.instruction)
+                                .unwrap() as u8,
+                            arg1: arg1 as u64,
+                            arg2: arg2,
+                            arg1IsReg: reg1,
+                            arg2IsReg: reg2,
+                        });
+                        continue;
+                    }
+                    if cfg!(debug_assertions) {
+                        println!("{:?}", line);
+                    }
+                    let (arg1, reg1) = ByteCodeCompiler::getLineArgCode(line.arg1.as_str());
+                    let (arg2, reg2) = ByteCodeCompiler::getLineArgCode(line.arg2.as_str());
+                    self.lines.push(Line {
+                        instruction: stringInstructionsToU8
+                            .iter()
+                            .position(|&s| s == line.instruction)
+                            .expect(&("invalid instruction: ".to_string() + line.instruction.as_str()))
+                            as u8,
+                        arg1: arg1,
+                        arg2: arg2,
+                        arg1IsReg: reg1,
+                        arg2IsReg: reg2,
+                    });
+                },
+                IntermediateLanguageLine::Label(label) => {
+
+                }
+            }
+        }
+        let main_index = self.labels["main"];
+
+        let jmp_main = Line {
+            instruction: stringInstructionsToU8
+                .iter()
+                .position(|&s| s == "jmp")
+                .unwrap() as u8,
+            arg1: main_index as u64,
+            arg1IsReg: false,
+            arg2: 0,
+            arg2IsReg: false,
+        };
+
+        self.lines.insert(0, jmp_main);
+        if cfg!(debug_assertions) {
+            println!("{:?}", self.lines);
+        }
+    }
     pub fn run(&mut self) {
         let mut registers = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
         let mut mem: Vec<u64> = vec![];
@@ -264,5 +390,87 @@ impl Interpreter {
             }
             ip += 1;
         }
+    }
+    fn write_instructions(&mut self, filename: &str) -> io::Result<()> {
+        let mut file = File::create(filename)?;
+
+        for line in &self.lines {
+            // Write opcode
+            file.write_all(&[line.instruction])?;
+
+            // Write arg1 and arg2 as little-endian u64
+            file.write_all(&line.arg1.to_le_bytes())?;
+            file.write_all(&line.arg2.to_le_bytes())?;
+
+            // Pack booleans into a single byte
+            let mut flags: u8 = 0;
+            if line.arg1IsReg {
+                flags |= 1 << 0;
+            }
+            if line.arg2IsReg {
+                flags |= 1 << 1;
+            }
+            file.write_all(&[flags])?;
+        }
+        Ok(())
+    }
+
+    fn read_instructions(filename: &str) -> io::Result<Vec<Line>> {
+        let mut file = BufReader::new(File::open(filename)?);
+        let mut instructions = Vec::new();
+        let mut buf = [0u8; 18];
+
+        while file.read_exact(&mut buf).is_ok() {
+            let instruction = buf[0];
+            let arg1 = u64::from_le_bytes(buf[1..9].try_into().unwrap());
+            let arg2 = u64::from_le_bytes(buf[9..17].try_into().unwrap());
+            let flags = buf[17];
+            let arg1_is_reg = flags & 1 != 0;
+            let arg2_is_reg = flags & 2 != 0;
+
+            instructions.push(Line {
+                instruction: instruction,
+                arg1: arg1,
+                arg1IsReg: arg1_is_reg,
+                arg2: arg2,
+                arg2IsReg: arg2_is_reg,
+            });
+        }
+
+        Ok(instructions)
+    }
+    fn readFromFile(&mut self, path: &str) {
+        self.lines = ByteCodeCompiler::read_instructions(path).unwrap()
+    }
+    fn writeToFile(&mut self, path: &str) {
+        self.write_instructions(path).unwrap()
+    }
+}
+fn interrupt(intCode: u8, value: u64, mem: &mut Vec<u64>, p: &mut u64, useP: &mut bool) {
+    match intCode {
+        0 => process::exit(value as i32),
+        1 => {
+            let start = mem.len();
+            mem.resize(start + value as usize, 0);
+            *useP = true;
+            *p = start as u64;
+        }
+        2 => print!("{}", std::char::from_u32(value as u32).unwrap()),
+        3 => print!("{}", value),
+        4 => {
+            *p = mem.len() as u64;
+            *useP = true;
+        }
+        _ => panic!("invalid interrupt code {}", intCode),
+    }
+}
+
+
+struct x86_64Compiler{
+
+}
+impl x86_64Compiler {
+    pub fn compileToX86_64FromIntermediate(intermediateLanguage: IntermediateLanguage){
+
     }
 }
